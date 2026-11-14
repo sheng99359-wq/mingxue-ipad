@@ -259,14 +259,22 @@
   }
 
   /* iPad 竖屏 / 窄屏自适应抽屉与触控优化 */
-  @media (max-width: 1080px) {
-    .btn, .btn-light { min-height: 36px; padding: 6px 10px; }
+  .vbar::-webkit-scrollbar { display: none; }
+  @media (max-width: 1180px) {
+    .vbar {
+      flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch;
+      scrollbar-width: none; gap: 6px;
+    }
+    .vbar .spacer { display: none; }
+    .btn, .btn-light { min-height: 36px; padding: 6px 10px; flex-shrink: 0; }
+    .qbar { padding: 4px 8px !important; }
+    #quickDictResult { display: none; }
     .left-panel, .right-panel {
       position: absolute; top: 0; bottom: 0; z-index: 40;
       box-shadow: 0 8px 28px rgba(15, 23, 42, 0.25);
     }
-    .left-panel { left: 0; width: 250px; }
-    .right-panel { right: 0; width: 300px; }
+    .left-panel { left: 0; width: 260px; }
+    .right-panel { right: 0; width: 305px; }
   }
 
   /* iPad Safari 打印 / 存为 PDF 讲义样式 */
@@ -2318,9 +2326,9 @@ async function translatePage(page, proofread = false) {
   const srcCanvas = appState.pageImages[page];
   if (!doc || !srcCanvas) return;
 
-  const baseUrl = (localStorage.getItem("mx_base_url") || "https://api.openai.com/v1").replace(/\/+$/, "");
-  const apiKey = (localStorage.getItem("mx_api_key") || "").trim();
-  const model = (localStorage.getItem("mx_model") || "gpt-4o-mini").trim();
+  const baseUrl = (safeGetItem("mx_base_url") || "https://api.openai.com/v1").replace(/\/+$/, "");
+  const apiKey = (safeGetItem("mx_api_key") || "").trim();
+  const model = (safeGetItem("mx_model") || "gpt-4o-mini").trim();
   const subj = document.getElementById("subjectSelect").value;
   const tgt = document.getElementById("langModeSelect").value || "zh";
 
@@ -2362,10 +2370,10 @@ async function translatePage(page, proofread = false) {
       "reason": "为何该选项正确的核心语法/学科依据",
       "confidence": "高（已双重核验）",
       "choices": [
-        {"label": "A", "anchor": "A 选项原文或画线词", "is_correct": false, "reason": "词义 + 为何是/不是答案的原因"},
-        {"label": "B", "anchor": "B 选项原文或画线词", "is_correct": true, "reason": "词义 + 为何是/不是答案的原因"},
-        {"label": "C", "anchor": "C 选项原文或画线词", "is_correct": false, "reason": "词义 + 为何是/不是答案的原因"},
-        {"label": "D", "anchor": "D 选项原文或画线词", "is_correct": false, "reason": "词义 + 为何是/不是答案的原因"}
+        {"label": "A", "anchor": "A 选项原文或画线词", "meaning": "A 选项简洁中文词义", "is_correct": false, "reason": "为何是/不是答案的原因"},
+        {"label": "B", "anchor": "B 选项原文或画线词", "meaning": "B 选项简洁中文词义", "is_correct": true, "reason": "为何是/不是答案的原因"},
+        {"label": "C", "anchor": "C 选项原文或画线词", "meaning": "C 选项简洁中文词义", "is_correct": false, "reason": "为何是/不是答案的原因"},
+        {"label": "D", "anchor": "D 选项原文或画线词", "meaning": "D 选项简洁中文词义", "is_correct": false, "reason": "为何是/不是答案的原因"}
       ]
     }
   ]
@@ -2388,7 +2396,7 @@ async function translatePage(page, proofread = false) {
             const nw = normWord(w);
             if (nw && m) userGlossary[nw] = String(m).trim();
           }
-          localStorage.setItem("mx_user_glossary", JSON.stringify(userGlossary));
+          safeSetItem("mx_user_glossary", JSON.stringify(userGlossary));
         }
         const W = srcCanvas.width, H = srcCanvas.height;
         const wLines = [];
@@ -2460,7 +2468,7 @@ async function translatePage(page, proofread = false) {
       "reason": "为何该选项正确的核心依据",
       "confidence": "高（已双重核验）",
       "choices": [
-        {"label": "A", "anchor": "A 选项原文", "is_correct": false, "reason": "词义 + 为何是/不是答案的原因"}
+        {"label": "A", "anchor": "A 选项原文", "meaning": "A 选项简洁中文词义", "is_correct": false, "reason": "为何是/不是答案的原因"}
       ]
     }
   ]
@@ -2479,7 +2487,7 @@ ${JSON.stringify(linesPayload)}`;
           const nw = normWord(w);
           if (nw && m) userGlossary[nw] = String(m).trim();
         }
-        localStorage.setItem("mx_user_glossary", JSON.stringify(userGlossary));
+        safeSetItem("mx_user_glossary", JSON.stringify(userGlossary));
       }
       if (Array.isArray(parsed.answers)) doc.answers = parsed.answers;
       rebuildPageNotesText(page);
@@ -2632,12 +2640,69 @@ function renderTranslationPageToCanvas(page, refW, refH) {
   const ctx = c.getContext("2d");
   ctx.fillStyle = "#ffffff";
   ctx.fillRect(0, 0, W, totalH);
-  let y = 36;
+  const wrapText = (str, maxW, fontStr) => {
+    ctx.font = fontStr;
+    const out = [];
+    let cur = "";
+    for (const ch of String(str || "")) {
+      if (ctx.measureText(cur + ch).width > maxW && cur) {
+        out.push(cur);
+        cur = ch;
+      } else {
+        cur += ch;
+      }
+    }
+    if (cur) out.push(cur);
+    return out.length ? out : [""];
+  };
+
+  const drawItems = [];
+  let vocabBuf = [];
+  const flushVocabBuf = () => {
+    if (!vocabBuf.length) return;
+    const cols = 3;
+    const colW = Math.floor((W - 56) / cols);
+    for (let k = 0; k < vocabBuf.length; k += cols) {
+      drawItems.push({ kind: "vocab_row", items: vocabBuf.slice(k, k + cols), colW, gap: k === 0 ? 8 : 3 });
+    }
+    vocabBuf = [];
+  };
+
   for (const item of linesOut) {
-    y += item.gap;
-    ctx.font = `${item.bold ? "bold " : ""}${fpx}px "Microsoft YaHei", sans-serif`;
-    ctx.fillStyle = item.col;
-    ctx.fillText(item.text, 28, y);
+    if (item.col === "#1e40af" && item.text.includes("= ")) {
+      vocabBuf.push(item.text);
+      continue;
+    }
+    flushVocabBuf();
+    const fontStr = `${item.bold ? "bold " : ""}${fpx}px -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif`;
+    const wrapped = wrapText(item.text, W - 56, fontStr);
+    wrapped.forEach((wl, idx) => {
+      drawItems.push({ kind: "line", text: wl, col: item.col, fontStr, gap: idx === 0 ? item.gap : 2 });
+    });
+  }
+  flushVocabBuf();
+
+  const neededH = Math.max(refH, drawItems.reduce((acc, it) => acc + it.gap + lh, 80));
+  if (neededH > c.height) {
+    c.height = neededH;
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, W, c.height);
+  }
+
+  let y = 36;
+  for (const it of drawItems) {
+    y += it.gap;
+    if (it.kind === "vocab_row") {
+      ctx.font = `15px -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif`;
+      ctx.fillStyle = "#1e40af";
+      it.items.forEach((vt, idx) => {
+        ctx.fillText(vt.slice(0, 26), 28 + idx * it.colW, y);
+      });
+    } else {
+      ctx.font = it.fontStr;
+      ctx.fillStyle = it.col;
+      ctx.fillText(it.text, 28, y);
+    }
     y += lh;
   }
   return c;
@@ -2861,7 +2926,7 @@ document.getElementById("saveGlossaryBtn").addEventListener("click", () => {
     }
   }
   userGlossary = next;
-  localStorage.setItem("mx_user_glossary", JSON.stringify(userGlossary));
+  safeSetItem("mx_user_glossary", JSON.stringify(userGlossary));
   closeModals();
   showPage();
 });
@@ -2989,6 +3054,38 @@ function setSplitRatio(pct) {
     const file = ev.dataTransfer && ev.dataTransfer.files && ev.dataTransfer.files[0];
     if (file) {
       await loadImportedFile(file);
+    }
+  });
+})();
+
+
+// iPad 触控优化：双击左图切换「适合栏宽 / 100%」，点翻译自动收起侧栏
+(function initIpadUxEnhancements() {
+  const lv = document.getElementById("leftView");
+  if (lv) {
+    let lastTap = 0;
+    lv.addEventListener("touchend", (ev) => {
+      const now = Date.now();
+      if (now - lastTap < 300 && ev.touches.length === 0) {
+        if (Math.abs((appState.zoom || 100) - 100) < 8) fitLeftWidth();
+        else setZoom(100);
+      }
+      lastTap = now;
+    }, { passive: true });
+    lv.addEventListener("dblclick", () => {
+      if (Math.abs((appState.zoom || 100) - 100) < 8) fitLeftWidth();
+      else setZoom(100);
+    });
+  }
+
+  ["transTopBtn", "translateMainBtn", "proofreadBtn"].forEach(id => {
+    const btn = document.getElementById(id);
+    if (btn) {
+      btn.addEventListener("click", () => {
+        if (window.innerWidth <= 1180) {
+          document.getElementById("mainBody").classList.add("hide-left", "hide-right");
+        }
+      });
     }
   });
 })();

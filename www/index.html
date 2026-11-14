@@ -172,6 +172,26 @@
     border-color: #93c5fd; border-left-color: #ef4444;
     box-shadow: 0 4px 14px rgba(37, 99, 235, 0.14);
   }
+  .sec-title {
+    font-weight: 700; color: #0f172a; margin: 8px 0 4px 0; font-size: 0.98em;
+  }
+  .q-badge-title {
+    font-weight: 800; color: #1e3a8a; font-size: 1.08em; margin-bottom: 6px;
+    padding-bottom: 4px; border-bottom: 1.5px solid #dbeafe;
+  }
+  .roman-list {
+    margin: 8px 0; display: flex; flex-direction: column; gap: 4px;
+  }
+  .roman-item {
+    padding: 4px 8px; border-radius: 6px; background: #f8fafc;
+    border-left: 3px solid #60a5fa; cursor: pointer; line-height: 1.48;
+  }
+  .roman-item:hover, .roman-item:active { background: #eff6ff; }
+  .para-explain {
+    margin: 10px 0 6px 0; padding: 8px 10px; border-radius: 7px;
+    background: #f0f9ff; border: 1px solid #bae6fd; color: #0c4a6e; line-height: 1.52;
+  }
+
   /* 第一段：原句 + 译句（上下左端完全对齐） */
   .para-sentence {
     margin-bottom: 12px; padding-bottom: 9px; border-bottom: 1px dashed #e2e8f0;
@@ -1493,144 +1513,215 @@ function renderTranslationCards(page) {
     return card;
   }
 
-  function appendSentenceAndVocab(cardEl, grp, isShortHeader = false, qNum = "") {
+  function initQuestionCard(qNum = "", isInstruction = false) {
+    const card = createCard();
+    const meta = {
+      card, qNum, isInstruction,
+      soalanWrap: document.createElement("div"),
+      huawenWrap: document.createElement("div"),
+      romanWrap: document.createElement("div"),
+      optWrap: null,
+      explainWrap: document.createElement("div"),
+      vocabSection: document.createElement("div"),
+      idiomHits: [],
+      idiomSeen: new Set(),
+      vocabItems: [],
+      vocabSeen: new Set(),
+      minY: null, maxY: null,
+    };
+
+    if (qNum) {
+      const qHdr = document.createElement("div");
+      qHdr.className = "q-badge-title";
+      qHdr.textContent = `选择题 ${qNum}`;
+      card.appendChild(qHdr);
+    }
+
+    const sTitle = document.createElement("div");
+    sTitle.className = "sec-title";
+    sTitle.textContent = isInstruction ? "题目说明：" : "Soalan:";
+    card.appendChild(sTitle);
+    meta.soalanWrap.className = "para-sentence";
+    meta.soalanWrap.style.marginBottom = "6px";
+    card.appendChild(meta.soalanWrap);
+
+    const zTitle = document.createElement("div");
+    zTitle.className = "sec-title";
+    zTitle.style.color = "#0d47a1";
+    zTitle.textContent = "华文：";
+    card.appendChild(zTitle);
+    meta.huawenWrap.className = "para-sentence";
+    meta.huawenWrap.style.marginBottom = "6px";
+    card.appendChild(meta.huawenWrap);
+
+    meta.romanWrap.className = "roman-list";
+    meta.romanWrap.style.display = "none";
+    card.appendChild(meta.romanWrap);
+
+    meta.explainWrap.className = "para-explain";
+    meta.explainWrap.style.display = "none";
+    card.appendChild(meta.explainWrap);
+
+    meta.vocabSection.style.display = "none";
+    card.appendChild(meta.vocabSection);
+    return meta;
+  }
+
+  function appendClickableOrigLine(targetEl, dispOrig, sWords, sentBox, cardEl) {
+    const lOrig = document.createElement("div");
+    lOrig.className = "line-orig";
+    let wCursor = 0;
+    for (const tk of dispOrig.split(/(\s+)/)) {
+      if (/^\s+$/.test(tk)) {
+        lOrig.appendChild(document.createTextNode(tk));
+        continue;
+      }
+      const span = document.createElement("span");
+      span.className = "orig-word";
+      span.textContent = tk;
+      const clean = normWord(tk);
+      let matchedWt = null;
+      for (let k = wCursor; k < Math.min(sWords.length, wCursor + 4); k++) {
+        if (normWord(sWords[k][0]) === clean) {
+          matchedWt = sWords[k];
+          wCursor = k + 1;
+          break;
+        }
+      }
+      if (matchedWt) {
+        const [wStr, tInfo] = matchedWt;
+        const wMean = zhByPos[`${tInfo.ix0},${tInfo.iy0}`] || (useSaved ? lookupWord(wStr, tgt) : "");
+        const wBox = [tInfo.ix0, tInfo.iy0, tInfo.ix1, tInfo.iy1];
+        const wLbl = wMean ? `${wStr.toLowerCase()} ${wMean}` : wStr;
+        span.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          locateOnLeftImage(wBox, sentBox, wLbl, lOrig, cardEl);
+        });
+      }
+      lOrig.appendChild(span);
+    }
+    bindLocate(lOrig, sentBox, sentBox, dispOrig, cardEl);
+    targetEl.appendChild(lOrig);
+  }
+
+  function flushCardVocabAndSpan(meta) {
+    if (!meta) return;
+    if (meta.minY !== null && meta.maxY !== null) {
+      meta.card.dataset.sy0 = meta.minY;
+      meta.card.dataset.sy1 = meta.maxY;
+    }
+    if (!showVocab) return;
+    const sec = meta.vocabSection;
+    sec.innerHTML = "";
+    if (!meta.idiomHits.length && !meta.vocabItems.length) {
+      sec.style.display = "none";
+      return;
+    }
+    sec.style.display = "block";
+    const vHdr = document.createElement("div");
+    vHdr.className = "sec-title";
+    vHdr.style.color = "#1e3a8a";
+    vHdr.textContent = "重要词汇：";
+    sec.appendChild(vHdr);
+
+    if (meta.idiomHits.length) {
+      const pIdiom = document.createElement("div");
+      pIdiom.className = "para-idioms";
+      for (const ih of meta.idiomHits) {
+        const iEl = document.createElement("div");
+        iEl.className = "idiom-line";
+        iEl.innerHTML = `📖 <b>${ih.phrase}</b> <span style="color:#b45309;">[${ih.kind}]</span> — ${ih.meaning}`;
+        bindLocate(iEl, ih.box, ih.sentBox, `${ih.phrase} ${ih.meaning}`, meta.card);
+        pIdiom.appendChild(iEl);
+      }
+      sec.appendChild(pIdiom);
+    }
+
+    if (meta.vocabItems.length) {
+      const pVocab = document.createElement("div");
+      pVocab.className = "para-vocab";
+      for (const [w, z, t, sentBox] of meta.vocabItems) {
+        const dispW = (w === w.toUpperCase() && w.length > 1) ? w : (w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());
+        const vText = `${dispW} = ${z}`;
+        const vEl = document.createElement("div");
+        vEl.className = "vocab-line";
+        vEl.innerHTML = `<span><b style="color:#1e3a8a">${dispW}</b> = ${z}</span>`;
+        const wBox = [t.ix0, t.iy0, t.ix1, t.iy1];
+        bindLocate(vEl, wBox, sentBox, vText, meta.card);
+        pVocab.appendChild(vEl);
+      }
+      sec.appendChild(pVocab);
+    }
+  }
+
+  function collectSentenceVocab(meta, u, sentBox) {
+    if (!showVocab) return;
+    for (const ih of extractIdiomsFromWords(u.sWords)) {
+      if (!meta.idiomSeen.has(ih.phrase)) {
+        meta.idiomSeen.add(ih.phrase);
+        meta.idiomHits.push({ ...ih, sentBox });
+      }
+    }
+    for (const [w, t] of u.sWords) {
+      const key = normWord(w);
+      if (!key || key.length < 2 || meta.vocabSeen.has(key) || SKIP_VOCAB_WORDS.has(key) || /^\d+$/.test(key)) continue;
+      const z = zhByPos[`${t.ix0},${t.iy0}`] || (useSaved ? lookupWord(w, tgt) : "");
+      if (!z) continue;
+      meta.vocabSeen.add(key);
+      meta.vocabItems.push([w, z, t, sentBox]);
+    }
+  }
+
+  function appendSentenceAndVocab(meta, grp, isShortHeader = false) {
     const units = splitGroupSentences(grp, zhLines, tgt);
     for (let uIdx = 0; uIdx < units.length; uIdx++) {
       const u = units[uIdx];
       const sentBox = [u.ix0, u.iy0, u.ix1, u.iy1];
-      const pSent = document.createElement("div");
-      pSent.className = "para-sentence";
-
       let dispOrig = u.sOrig.trim();
-      if (uIdx === 0 && qNum) {
+      if (uIdx === 0 && meta.qNum) {
         dispOrig = dispOrig.replace(/^\d{1,2}[\.\)\s]+/, "").trim();
-        const qHdr = document.createElement("div");
-        qHdr.style.cssText = "font-weight:700;color:#1e3a8a;margin-bottom:2px;";
-        qHdr.textContent = `第${qNum}题`;
-        pSent.appendChild(qHdr);
-        const origLabel = document.createElement("div");
-        origLabel.style.cssText = "font-weight:700;color:#0f172a;margin-bottom:8px;";
-        origLabel.textContent = "原题：";
-        pSent.appendChild(origLabel);
       }
-
-      const lOrig = document.createElement("div");
-      lOrig.className = "line-orig";
-      lOrig.style.marginBottom = "10px";
-      let wCursor = 0;
-      for (const tk of dispOrig.split(/(\s+)/)) {
-        if (/^\s+$/.test(tk)) {
-          lOrig.appendChild(document.createTextNode(tk));
-          continue;
-        }
-        const span = document.createElement("span");
-        span.className = "orig-word";
-        span.textContent = tk;
-        const clean = normWord(tk);
-        let matchedWt = null;
-        for (let k = wCursor; k < Math.min(u.sWords.length, wCursor + 4); k++) {
-          if (normWord(u.sWords[k][0]) === clean) {
-            matchedWt = u.sWords[k];
-            wCursor = k + 1;
-            break;
-          }
-        }
-        if (matchedWt) {
-          const [wStr, tInfo] = matchedWt;
-          const wMean = zhByPos[`${tInfo.ix0},${tInfo.iy0}`] || (useSaved ? lookupWord(wStr, tgt) : "");
-          const wBox = [tInfo.ix0, tInfo.iy0, tInfo.ix1, tInfo.iy1];
-          const wLbl = wMean ? `${wStr.toLowerCase()} ${wMean}` : wStr;
-          span.addEventListener("click", (ev) => {
-            ev.stopPropagation();
-            locateOnLeftImage(wBox, sentBox, wLbl, lOrig, cardEl);
-          });
-        }
-        lOrig.appendChild(span);
-      }
-      bindLocate(lOrig, sentBox, sentBox, dispOrig, cardEl);
-      pSent.appendChild(lOrig);
+      appendClickableOrigLine(meta.soalanWrap, dispOrig, u.sWords, sentBox, meta.card);
 
       if (u.sZh) {
         const lZh = document.createElement("div");
         lZh.className = "line-zh";
         lZh.textContent = u.sZh.replace(/^\d{1,2}[\.\)、\s]+/, "").trim();
-        bindLocate(lZh, sentBox, sentBox, `${dispOrig} → ${u.sZh}`, cardEl);
-        pSent.appendChild(lZh);
+        bindLocate(lZh, sentBox, sentBox, `${dispOrig} → ${u.sZh}`, meta.card);
+        meta.huawenWrap.appendChild(lZh);
       }
-      cardEl.appendChild(pSent);
+      if (!isShortHeader) collectSentenceVocab(meta, u, sentBox);
+    }
+  }
 
-      // 若是罗马数字分句 (I/II/III/IV) 且包含核心用词辨析词，自动给出 ✔/✘ 用词正误与改用词提示
-      if (/^(?:IV|I{1,3})[\.\)]\s*/i.test(dispOrig)) {
-        const uJudge = judgeWordUsage(dispOrig);
-        if (uJudge) {
-          const badge = document.createElement("div");
-          badge.style.marginTop = "4px";
-          badge.innerHTML = uJudge.ok
-            ? `<span class="usage-badge-ok">✔ 用法正确：${uJudge.reason}</span>`
-            : `<span class="usage-badge-no">✘ 用法错误${uJudge.fix ? `（应改用：${uJudge.fix}）` : ""}：${uJudge.reason}</span>`;
-          pSent.appendChild(badge);
-        }
+  function appendRomanStatement(meta, grp) {
+    meta.romanWrap.style.display = "flex";
+    const units = splitGroupSentences(grp, zhLines, tgt);
+    for (const u of units) {
+      const sentBox = [u.ix0, u.iy0, u.ix1, u.iy1];
+      const dispOrig = u.sOrig.trim();
+      const dispZh = (u.sZh || "").replace(/^\s*(?:IV|I{1,3})[\.\)、\s]*/i, "").trim();
+      const row = document.createElement("div");
+      row.className = "roman-item";
+      row.innerHTML = `<span style="font-weight:600;color:#0f172a;">${dispOrig}</span>` + (dispZh ? `<span style="color:#0d47a1;font-weight:600;"> —— ${dispZh}</span>` : "");
+      const uJudge = judgeWordUsage(dispOrig);
+      if (uJudge) {
+        const b = document.createElement("div");
+        b.style.marginTop = "3px";
+        b.innerHTML = uJudge.ok
+          ? `<span class="usage-badge-ok">✔ 用法正确：${uJudge.reason}</span>`
+          : `<span class="usage-badge-no">✘ 用法错误${uJudge.fix ? `（应改用：${uJudge.fix}）` : ""}：${uJudge.reason}</span>`;
+        row.appendChild(b);
       }
-
-      if (isShortHeader || !showVocab) continue;
-
-      // 马来文成语/谚语识别与解释
-      const idiomHits = extractIdiomsFromWords(u.sWords);
-      const idiomWordsUsed = new Set();
-      if (idiomHits.length) {
-        const pIdiom = document.createElement("div");
-        pIdiom.className = "para-idioms";
-        for (const ih of idiomHits) {
-          ih.wordSet.forEach(w => idiomWordsUsed.add(w));
-          const iEl = document.createElement("div");
-          iEl.className = "idiom-line";
-          iEl.innerHTML = `📖 <b>${ih.phrase}</b> <span style="color:#b45309;">[${ih.kind}]</span> — ${ih.meaning}`;
-          bindLocate(iEl, ih.box, sentBox, `${ih.phrase} ${ih.meaning}`, cardEl);
-          pIdiom.appendChild(iEl);
-        }
-        cardEl.appendChild(pIdiom);
-      }
-
-      const seen = new Set();
-      const vocabList = [];
-      for (const [w, t] of u.sWords) {
-        const key = normWord(w);
-        if (!key || key.length < 2 || seen.has(key) || SKIP_VOCAB_WORDS.has(key) || /^\d+$/.test(key)) continue;
-        const z = zhByPos[`${t.ix0},${t.iy0}`] || (useSaved ? lookupWord(w, tgt) : "");
-        if (!z) continue;
-        seen.add(key);
-        vocabList.push([w, z, t]);
-      }
-
-      if (vocabList.length) {
-        const pVocab = document.createElement("div");
-        pVocab.className = "para-vocab";
-        for (const [w, z, t] of vocabList) {
-          const dispW = (w === w.toUpperCase() && w.length > 1) ? w : w.toLowerCase();
-          const vText = `${dispW} = ${z}`;
-          const vEl = document.createElement("div");
-          vEl.className = "vocab-line";
-          vEl.innerHTML = `<span><b style="color:#1e3a8a">${dispW}</b> = ${z}</span>`;
-          const wBox = [t.ix0, t.iy0, t.ix1, t.iy1];
-          bindLocate(vEl, wBox, sentBox, vText, cardEl);
-          pVocab.appendChild(vEl);
-        }
-        cardEl.appendChild(pVocab);
-      }
+      bindLocate(row, sentBox, sentBox, `${dispOrig} ${dispZh}`, meta.card);
+      meta.romanWrap.appendChild(row);
+      collectSentenceVocab(meta, u, sentBox);
     }
   }
 
   const wLines = doc.wordLines;
   const n = wLines.length;
-  let i = 0, curQ = "", currentCard = null, currentOptWrap = null;
-  let cardMinY = null, cardMaxY = null;
-
-  function flushCardSpan(cardEl, minY, maxY) {
-    if (cardEl && minY !== null && maxY !== null) {
-      cardEl.dataset.sy0 = minY;
-      cardEl.dataset.sy1 = maxY;
-    }
-  }
+  let i = 0, curQ = "", currentMeta = null;
 
   while (i < n) {
     const ln = wLines[i];
@@ -1644,12 +1735,7 @@ function renderTranslationCards(page) {
     const hit = matchOptionLine(txt, curQ);
 
     if (isRoman) {
-      if (/^(?:\d+[\.\)\s]+)?I[\.\)]\s+\S/.test(txt) || !currentCard) {
-        flushCardSpan(currentCard, cardMinY, cardMaxY);
-        currentCard = createCard();
-        currentOptWrap = null;
-        cardMinY = null; cardMaxY = null;
-      }
+      if (!currentMeta) currentMeta = initQuestionCard(curQ, false);
       const grp = [ln];
       i++;
       while (i < n) {
@@ -1659,23 +1745,23 @@ function renderTranslationCards(page) {
         i++;
       }
       for (const g of grp) for (const [, t] of g.words) {
-        cardMinY = cardMinY === null ? t.iy0 : Math.min(cardMinY, t.iy0);
-        cardMaxY = cardMaxY === null ? t.iy1 : Math.max(cardMaxY, t.iy1);
+        currentMeta.minY = currentMeta.minY === null ? t.iy0 : Math.min(currentMeta.minY, t.iy0);
+        currentMeta.maxY = currentMeta.maxY === null ? t.iy1 : Math.max(currentMeta.maxY, t.iy1);
       }
-      appendSentenceAndVocab(currentCard, grp, false);
+      appendRomanStatement(currentMeta, grp);
       continue;
     }
 
     if (hit || ln.role === "option") {
-      if (!currentCard) currentCard = createCard();
-      if (!currentOptWrap) {
-        currentOptWrap = document.createElement("div");
-        currentOptWrap.className = "para-options";
+      if (!currentMeta) currentMeta = initQuestionCard(curQ, false);
+      if (!currentMeta.optWrap) {
+        currentMeta.optWrap = document.createElement("div");
+        currentMeta.optWrap.className = "para-options";
         const optHdr = document.createElement("div");
-        optHdr.style.cssText = "font-weight:700;color:#0f172a;margin-bottom:2px;";
-        optHdr.textContent = "选项：";
-        currentOptWrap.appendChild(optHdr);
-        currentCard.appendChild(currentOptWrap);
+        optHdr.className = "sec-title";
+        optHdr.textContent = "Pilihan jawapan（选择答案）：";
+        currentMeta.optWrap.appendChild(optHdr);
+        currentMeta.card.insertBefore(currentMeta.optWrap, currentMeta.explainWrap);
       }
       const ws = [];
       for (const [w, t] of ln.words) {
@@ -1689,42 +1775,48 @@ function renderTranslationCards(page) {
       const optEl = document.createElement("div");
       optEl.className = "opt-line" + (ok ? " opt-correct" : "");
 
-      let html = `<span class="opt-orig">- ${dispOpt}</span>`;
-      if (mean) html += `<span class="opt-mean"> — ${mean}</span>`;
+      let optHtml = `<span class="opt-orig">- ${dispOpt}</span>`;
+      if (mean) optHtml += `<span class="opt-mean"> —— ${mean}</span>`;
       if (hit && !ok && hit.ch.reason) {
-        html += `<span class="opt-expl-no">（${hit.ch.reason}）</span>`;
+        optHtml += `<span class="opt-expl-no">（${hit.ch.reason}）</span>`;
       }
-      optEl.innerHTML = html;
+      optEl.innerHTML = optHtml;
 
       const ix0 = Math.min(...ln.words.map(x => x[1].ix0));
       const iy0 = Math.min(...ln.words.map(x => x[1].iy0));
       const ix1 = Math.max(...ln.words.map(x => x[1].ix1));
       const iy1 = Math.max(...ln.words.map(x => x[1].iy1));
-      cardMinY = cardMinY === null ? iy0 : Math.min(cardMinY, iy0);
-      cardMaxY = cardMaxY === null ? iy1 : Math.max(cardMaxY, iy1);
+      currentMeta.minY = currentMeta.minY === null ? iy0 : Math.min(currentMeta.minY, iy0);
+      currentMeta.maxY = currentMeta.maxY === null ? iy1 : Math.max(currentMeta.maxY, iy1);
       const optBox = [ix0, iy0, ix1, iy1];
-      bindLocate(optEl, optBox, optBox, `- ${dispOpt} ${mean ? '— ' + mean : ''}`, currentCard);
-      currentOptWrap.appendChild(optEl);
+      bindLocate(optEl, optBox, optBox, `- ${dispOpt} ${mean ? '—— ' + mean : ''}`, currentMeta.card);
+      currentMeta.optWrap.appendChild(optEl);
+
+      // Collect option words into bottom 重要词汇
+      collectSentenceVocab(currentMeta, { sWords: ln.words.filter(([w]) => !/^[A-Da-d]$/.test(w)) }, optBox);
 
       if (hit && hit.k === hit.a.choices.length - 1) {
         const sumEl = document.createElement("div");
         sumEl.className = "ans-summary";
         const corrCh = (hit.a.choices || []).find(c => c.is_correct);
-        const fullAnsOpt = corrCh && corrCh.anchor ? corrCh.anchor.replace(/^\(?([A-Da-d])[\.\)]\s*/, (_, l) => `${l.toUpperCase()}. `) : hit.a.option;
+        const ansLetter = hit.a.option || (corrCh && corrCh.label) || "";
         const ansRsn = hit.a.reason || (corrCh && corrCh.reason) || "";
-        sumEl.textContent = `(答案：${fullAnsOpt})` + (ansRsn ? ` （${ansRsn}）` : "");
-        bindLocate(sumEl, optBox, optBox, `(答案：${fullAnsOpt})`, currentCard);
-        currentOptWrap.appendChild(sumEl);
+        sumEl.textContent = `(正确答案：${ansLetter})`;
+        bindLocate(sumEl, optBox, optBox, `(正确答案：${ansLetter})`, currentMeta.card);
+        currentMeta.optWrap.appendChild(sumEl);
+
+        if (ansRsn) {
+          currentMeta.explainWrap.style.display = "block";
+          currentMeta.explainWrap.innerHTML = `<div style="font-weight:700;margin-bottom:3px;">解释：</div><div>${ansRsn}</div>`;
+        }
       }
       i++;
       continue;
     }
 
     if (ln.role === "instruction") {
-      flushCardSpan(currentCard, cardMinY, cardMaxY);
-      currentCard = createCard();
-      currentOptWrap = null;
-      cardMinY = null; cardMaxY = null;
+      flushCardVocabAndSpan(currentMeta);
+      currentMeta = initQuestionCard("", true);
 
       const insGrp = [ln];
       i++;
@@ -1735,13 +1827,14 @@ function renderTranslationCards(page) {
         i++;
       }
       for (const g of insGrp) for (const [, t] of g.words) {
-        cardMinY = cardMinY === null ? t.iy0 : Math.min(cardMinY, t.iy0);
-        cardMaxY = cardMaxY === null ? t.iy1 : Math.max(cardMaxY, t.iy1);
+        currentMeta.minY = currentMeta.minY === null ? t.iy0 : Math.min(currentMeta.minY, t.iy0);
+        currentMeta.maxY = currentMeta.maxY === null ? t.iy1 : Math.max(currentMeta.maxY, t.iy1);
       }
       const origSent = insGrp.map(g => g.text.trim()).join(" ").trim();
       const isShort = /^(?:bahagian\s+[a-z0-9]+|\[\s*\d+\s*markah\s*\]|(?:soalan|question)\s*\d+\s*[-–—]\s*\d+)$/i.test(origSent);
-      appendSentenceAndVocab(currentCard, insGrp, isShort);
-      flushCardSpan(currentCard, cardMinY, cardMaxY);
+      appendSentenceAndVocab(currentMeta, insGrp, isShort);
+      flushCardVocabAndSpan(currentMeta);
+      currentMeta = null;
       continue;
     }
 
@@ -1752,26 +1845,25 @@ function renderTranslationCards(page) {
       if (/^(?:[A-Da-d][\.\)]?\s*){1,4}$/.test(tCur)) { i++; continue; }
       const mqC = tCur.match(/^(\d{1,2})(?:[\.\)]\s*|\s+(?=[A-Z"“‘(]))/);
       if (group.length && mqC) break;
-      if (lCur.role === "option" || lCur.role === "instruction" || byAnchor[tCur]) break;
+      if (lCur.role === "option" || lCur.role === "instruction" || byAnchor[tCur] || /^(?:\d+[\.\)\s]+)?(?:IV|I{1,3})[\.\)]\s+\S/.test(tCur)) break;
       if (mqC) curQ = mqC[1];
       group.push(lCur);
       i++;
     }
     if (!group.length) { i++; continue; }
 
-    flushCardSpan(currentCard, cardMinY, cardMaxY);
-    currentCard = createCard();
-    currentOptWrap = null;
-    cardMinY = null; cardMaxY = null;
+    flushCardVocabAndSpan(currentMeta);
+    currentMeta = initQuestionCard(curQ, false);
 
     const grpWords = [];
     for (const g of group) for (const wt of g.words) {
       grpWords.push(wt);
-      cardMinY = cardMinY === null ? wt[1].iy0 : Math.min(cardMinY, wt[1].iy0);
-      cardMaxY = cardMaxY === null ? wt[1].iy1 : Math.max(cardMaxY, wt[1].iy1);
+      currentMeta.minY = currentMeta.minY === null ? wt[1].iy0 : Math.min(currentMeta.minY, wt[1].iy0);
+      currentMeta.maxY = currentMeta.maxY === null ? wt[1].iy1 : Math.max(currentMeta.maxY, wt[1].iy1);
     }
-    appendSentenceAndVocab(currentCard, group, false, curQ);
+    appendSentenceAndVocab(currentMeta, group, false);
 
+    // If this question had inline answers without separate A/B/C/D lines
     const qInlineItems = (byQItems[curQ] || []).filter(it => !it.used);
     if (showAns && curQ && qInlineItems.length) {
       let hasUpcomingOpt = false;
@@ -1791,43 +1883,37 @@ function renderTranslationCards(page) {
         ];
         const optWrap = document.createElement("div");
         optWrap.className = "para-options";
-        currentCard.appendChild(optWrap);
+        const optHdr = document.createElement("div");
+        optHdr.className = "sec-title";
+        optHdr.textContent = "Pilihan jawapan（选择答案）：";
+        optWrap.appendChild(optHdr);
+        currentMeta.card.insertBefore(optWrap, currentMeta.explainWrap);
         for (const it of qInlineItems) {
           it.used = true;
           const ok = Boolean(it.ch.is_correct);
           const anc = String(it.ch.anchor || it.ch.label || "").trim();
-          const ancNorms = (anc.replace(/^[A-Da-d][\.\)\s]+/, "").match(/[A-Za-z]+(?:-[A-Za-z]+)*/g) || []).map(normWord).filter(Boolean);
-          let cBox = fbBox;
-          if (ancNorms.length) {
-            const matched = grpWords.filter(([w]) => ancNorms.includes(normWord(w))).map(([, t]) => t);
-            if (matched.length) {
-              cBox = [
-                Math.min(...matched.map(t => t.ix0)),
-                Math.min(...matched.map(t => t.iy0)),
-                Math.max(...matched.map(t => t.ix1)),
-                Math.max(...matched.map(t => t.iy1))
-              ];
-            }
-          }
           const optEl = document.createElement("div");
           optEl.className = "opt-line" + (ok ? " opt-correct" : "");
-          optEl.innerHTML = `<span class="opt-orig">${anc}</span><span class="${ok ? 'opt-expl-ok' : 'opt-expl-no'}">（${ok ? '√ ' + okTag : '× ' + noTag}：${it.ch.reason || ''}）</span>`;
-          bindLocate(optEl, cBox, fbBox, `第 ${curQ} 题 ${anc}`, currentCard);
+          optEl.innerHTML = `<span class="opt-orig">- ${anc}</span>` + (it.ch.meaning ? `<span class="opt-mean"> —— ${it.ch.meaning}</span>` : "") + (!ok && it.ch.reason ? `<span class="opt-expl-no">（${it.ch.reason}）</span>` : "");
+          bindLocate(optEl, fbBox, fbBox, `第 ${curQ} 题 ${anc}`, currentMeta.card);
           optWrap.appendChild(optEl);
 
-          if (it.k === it.a.choices.length - 1 && it.a.reason) {
+          if (it.k === it.a.choices.length - 1) {
             const sumEl = document.createElement("div");
             sumEl.className = "ans-summary";
-            sumEl.textContent = `√ 第 ${it.a.question} 题答案：${hitOrItConf(it.a)}`;
-            bindLocate(sumEl, fbBox, fbBox, `第 ${curQ} 题答案：${it.a.option}`, currentCard);
+            sumEl.textContent = `(正确答案：${it.a.option})`;
+            bindLocate(sumEl, fbBox, fbBox, `第 ${curQ} 题答案：${it.a.option}`, currentMeta.card);
             optWrap.appendChild(sumEl);
+            if (it.a.reason) {
+              currentMeta.explainWrap.style.display = "block";
+              currentMeta.explainWrap.innerHTML = `<div style="font-weight:700;margin-bottom:3px;">解释：</div><div>${it.a.reason}</div>`;
+            }
           }
         }
       }
     }
-    flushCardSpan(currentCard, cardMinY, cardMaxY);
   }
-  flushCardSpan(currentCard, cardMinY, cardMaxY);
+  flushCardVocabAndSpan(currentMeta);
 
   if (doc.ignored && doc.ignored.length) {
     const f = document.createElement("div");

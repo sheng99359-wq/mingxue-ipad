@@ -130,8 +130,21 @@
     flex: 1; display: flex; flex-direction: row; overflow: hidden; position: relative;
   }
   .center-area.split-v { flex-direction: column; }
-  .center-area.orig-only .right-view { display: none; }
-  .center-area.trans-only .left-view { display: none; }
+  .center-area.orig-only .right-view,
+  .center-area.orig-only .pane-splitter { display: none; }
+  .center-area.trans-only .left-view,
+  .center-area.trans-only .pane-splitter { display: none; }
+
+  .pane-splitter {
+    width: 14px; background: #cbd5e1; color: #475569;
+    cursor: col-resize; display: flex; align-items: center; justify-content: center;
+    font-size: 14px; font-weight: 700; user-select: none; touch-action: none;
+    flex-shrink: 0; z-index: 15; transition: background 0.12s;
+  }
+  .pane-splitter:hover, .pane-splitter.dragging { background: #60a5fa; color: #fff; }
+  .center-area.split-v .pane-splitter {
+    width: 100%; height: 14px; cursor: row-resize;
+  }
 
   .view-pane {
     flex: 1; height: 100%; overflow: auto; position: relative;
@@ -339,6 +352,9 @@
   <button class="btn" data-view="split-v">上下对照</button>
   <button class="btn" data-view="trans-only">📖 仅看译文</button>
   <button class="btn" data-view="orig-only">🖼 仅看原图</button>
+  <button class="btn" style="padding:4px 7px;font-size:11.5px;" onclick="setSplitRatio(35)" title="左窄右宽">3:7</button>
+  <button class="btn" style="padding:4px 7px;font-size:11.5px;" onclick="setSplitRatio(50)" title="左右均分">5:5</button>
+  <button class="btn" style="padding:4px 7px;font-size:11.5px;" onclick="setSplitRatio(65)" title="左宽右窄">7:3</button>
 
   <div class="vbar-sep"></div>
   <button class="btn" id="fitWidthBtn">适合栏宽</button>
@@ -437,6 +453,7 @@
         <svg id="hlOverlay" viewBox="0 0 900 1200" preserveAspectRatio="none"></svg>
       </div>
     </div>
+    <div class="pane-splitter" id="paneSplitter" title="按住拖动调整左右/上下框大小">⋮</div>
     <div class="view-pane right-view" id="rightView">
       <div class="trans-container" id="transContainer"></div>
     </div>
@@ -592,11 +609,15 @@
 <div class="modal-backdrop" id="gdriveModal">
   <div class="modal">
     <h3>☁️ 从 Google Drive 导入 PDF / 图片</h3>
-    <div style="background:#f0fdfa;border:1px solid #99f6e4;border-radius:8px;padding:10px;margin-bottom:10px;font-size:12.5px;color:#115e59;line-height:1.55;">
-      <b>方法一（推荐，私人/加密文件都能直接导入）：</b><br>
-      1. 确保 iPad 已安装 <b>Google Drive</b> App；<br>
-      2. 点下方绿色按钮 → 选<b>「选取文件」</b> → 点左上角<b>「浏览」→「Google Drive」</b>（若没看到，点右上角 <code>...</code> → 编辑 → 打开 Google Drive 开关）；<br>
-      3. 直接点选 Google Drive 里的 PDF 或图片即可！
+    <div style="background:#f0fdfa;border:1px solid #99f6e4;border-radius:8px;padding:10px;margin-bottom:10px;font-size:12.5px;color:#115e59;line-height:1.58;">
+      <b>为什么文件选择器里看不到 Google Drive？</b><br>
+      苹果默认隐藏第三方网盘，只需设置一次：<br>
+      1. 先打开 iPad 桌面蓝色自带的 <b>「文件」App</b> → 点左上角 <b>「浏览」</b>；<br>
+      2. 点顶部圆圈里的 <b><code>...</code> →「编辑」</b> → 把 <b>Google Drive（云端硬盘）</b> 开关打开 → 点完成；<br>
+      3. 回到这里点下方绿色按钮 →「选取文件」就能看到 Google Drive 了！<br><br>
+      <b>更快的替代方法（不用开开关）：</b><br>
+      • 在 <b>Google Drive App</b> 里打开文件 → 点 <b><code>...</code> →「打开方式 / 共享」→「存储到“文件”」</b>，再点下方绿色按钮选取；<br>
+      • 或把 Google Drive 和本页面 <b>iPad 分屏</b>，直接把 PDF/图片<b>拖进左侧原图区</b>！
     </div>
     <label class="btn-light success" style="text-align:center;display:block;cursor:pointer;margin-bottom:12px;">
       📂 打开 iPad 文件选择器（直连 Google Drive）
@@ -2896,6 +2917,80 @@ function copySafariJumpUrl() {
   if (location.protocol === "file:" || /mobileoffice|wps|quicklook/i.test(navigator.userAgent || "")) {
     banner.style.display = "flex";
   }
+})();
+
+
+function setSplitRatio(pct) {
+  const p = Math.max(18, Math.min(82, Number(pct) || 50));
+  const lv = document.getElementById("leftView");
+  const rv = document.getElementById("rightView");
+  if (!lv || !rv) return;
+  lv.style.flex = `0 0 ${p}%`;
+  rv.style.flex = "1 1 0%";
+  safeSetItem("mx_split_pct", String(p));
+}
+
+(function initPaneSplitter() {
+  const sp = document.getElementById("paneSplitter");
+  const ca = document.getElementById("centerArea");
+  if (!sp || !ca) return;
+  const savedPct = parseFloat(safeGetItem("mx_split_pct") || "50");
+  if (!isNaN(savedPct)) setSplitRatio(savedPct);
+
+  let dragging = false;
+  const onMove = (clientX, clientY) => {
+    if (!dragging) return;
+    const rect = ca.getBoundingClientRect();
+    const isVert = ca.classList.contains("split-v");
+    let pct = isVert
+      ? ((clientY - rect.top) / Math.max(1, rect.height)) * 100
+      : ((clientX - rect.left) / Math.max(1, rect.width)) * 100;
+    setSplitRatio(pct);
+    sp.textContent = isVert ? "⋯" : "⋮";
+  };
+
+  sp.addEventListener("pointerdown", (ev) => {
+    dragging = true;
+    sp.classList.add("dragging");
+    try { sp.setPointerCapture(ev.pointerId); } catch (e) {}
+    ev.preventDefault();
+  });
+  sp.addEventListener("pointermove", (ev) => {
+    if (dragging) onMove(ev.clientX, ev.clientY);
+  });
+  const endDrag = () => {
+    if (!dragging) return;
+    dragging = false;
+    sp.classList.remove("dragging");
+  };
+  sp.addEventListener("pointerup", endDrag);
+  sp.addEventListener("pointercancel", endDrag);
+
+  // Touch fallback for older iPadOS WebViews
+  sp.addEventListener("touchstart", (ev) => {
+    dragging = true;
+    sp.classList.add("dragging");
+    ev.preventDefault();
+  }, { passive: false });
+  window.addEventListener("touchmove", (ev) => {
+    if (!dragging || !ev.touches || !ev.touches[0]) return;
+    onMove(ev.touches[0].clientX, ev.touches[0].clientY);
+  }, { passive: true });
+  window.addEventListener("touchend", endDrag);
+})();
+
+// 支持 iPad 分屏 / 电脑直接拖拽 PDF 或图片到页面导入
+(function initDragDropImport() {
+  document.addEventListener("dragover", (ev) => {
+    ev.preventDefault();
+  });
+  document.addEventListener("drop", async (ev) => {
+    ev.preventDefault();
+    const file = ev.dataTransfer && ev.dataTransfer.files && ev.dataTransfer.files[0];
+    if (file) {
+      await loadImportedFile(file);
+    }
+  });
 })();
 
 // 初始化启动（iPad 竖屏/窄屏自动收起左右栏，留出最大阅读空间）

@@ -379,6 +379,7 @@
       📂 导入 PDF / 图片 / 拍照
       <input type="file" id="fileInput" accept="application/pdf,image/*,.pdf,.png,.jpg,.jpeg,.webp,.heic" style="display:none">
     </label>
+    <button class="btn-light" id="gdriveImportBtn" style="color:#0f766e;border-color:#5eead4;" onclick="openModal('gdriveModal')">☁️ 从 Google Drive 导入</button>
 
     <div class="row-btns">
       <button class="btn-light" onclick="openModal('glossaryModal')">📖 生词本</button>
@@ -587,6 +588,32 @@
 </div>
 
 <!-- 全科知识库与 AI 名师讲解弹窗 -->
+<!-- Google Drive 导入弹窗 -->
+<div class="modal-backdrop" id="gdriveModal">
+  <div class="modal">
+    <h3>☁️ 从 Google Drive 导入 PDF / 图片</h3>
+    <div style="background:#f0fdfa;border:1px solid #99f6e4;border-radius:8px;padding:10px;margin-bottom:10px;font-size:12.5px;color:#115e59;line-height:1.55;">
+      <b>方法一（推荐，私人/加密文件都能直接导入）：</b><br>
+      1. 确保 iPad 已安装 <b>Google Drive</b> App；<br>
+      2. 点下方绿色按钮 → 选<b>「选取文件」</b> → 点左上角<b>「浏览」→「Google Drive」</b>（若没看到，点右上角 <code>...</code> → 编辑 → 打开 Google Drive 开关）；<br>
+      3. 直接点选 Google Drive 里的 PDF 或图片即可！
+    </div>
+    <label class="btn-light success" style="text-align:center;display:block;cursor:pointer;margin-bottom:12px;">
+      📂 打开 iPad 文件选择器（直连 Google Drive）
+      <input type="file" id="gdrivePickerInput" style="display:none" onchange="handleGdriveLocalPick(this)">
+    </label>
+    <div class="form-row">
+      <label>方法二：粘贴 Google Drive 分享链接（需设为「知道链接的任何人可查看」）</label>
+      <input type="url" id="gdriveUrlInput" class="ctrl-input" placeholder="https://drive.google.com/file/d/xxxxxx/view?usp=sharing">
+    </div>
+    <div id="gdriveMsg" style="font-size:12px;color:#475569;margin-bottom:8px;"></div>
+    <div class="modal-actions">
+      <button class="btn-light" onclick="closeModals()">取消</button>
+      <button class="btn-light primary" onclick="importFromGdriveLink()">⬇️ 从链接导入</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-backdrop" id="knowledgeModal">
   <div class="modal" style="width:min(820px,95vw);max-height:88vh;display:flex;flex-direction:column;">
     <h3 style="margin:0 0 8px 0;color:#1e40af;">🎓 马来西亚全科知识百科与 AI 名师深度讲解（国/华/英/数/科/史/地/理/化/生）</h3>
@@ -2019,9 +2046,80 @@ rightView.addEventListener("scroll", () => {
 }, { passive: true });
 
 // ── 8. 导入 PDF / 拍照 / 相册图片 ──
+async function handleGdriveLocalPick(inp) {
+  const file = inp && inp.files && inp.files[0];
+  if (!file) return;
+  closeModals();
+  await loadImportedFile(file);
+  inp.value = "";
+}
+
+function extractGdriveFileId(url) {
+  const s = String(url || "").trim();
+  let m = s.match(/\/d\/([a-zA-Z0-9_-]{10,})/);
+  if (m) return m[1];
+  m = s.match(/[?&]id=([a-zA-Z0-9_-]{10,})/);
+  if (m) return m[1];
+  if (/^[a-zA-Z0-9_-]{20,}$/.test(s)) return s;
+  return "";
+}
+
+async function importFromGdriveLink() {
+  const raw = (document.getElementById("gdriveUrlInput")?.value || "").trim();
+  const msg = document.getElementById("gdriveMsg");
+  const fid = extractGdriveFileId(raw);
+  if (!fid) {
+    if (msg) msg.textContent = "⚠️ 未识别到有效的 Google Drive 文件链接或 ID，请检查后重试。";
+    return;
+  }
+  if (msg) msg.textContent = "⏳ 正在尝试从 Google Drive 读取文件...";
+
+  // 1) Try image CDN endpoint first (supports CORS for public images)
+  const imgUrl = `https://lh3.googleusercontent.com/d/${fid}=w2400`;
+  try {
+    const res = await fetch(imgUrl, { mode: "cors" });
+    const ctype = (res.headers.get("content-type") || "").toLowerCase();
+    if (res.ok && ctype.startsWith("image/")) {
+      const blob = await res.blob();
+      const ext = ctype.includes("png") ? "png" : "jpg";
+      const file = new File([blob], `gdrive_${fid.slice(0, 8)}.${ext}`, { type: ctype });
+      closeModals();
+      await loadImportedFile(file);
+      return;
+    }
+  } catch (e) {}
+
+  // 2) Try direct download endpoint (works if CORS allowed)
+  const dlUrl = `https://drive.google.com/uc?export=download&id=${fid}`;
+  try {
+    const res = await fetch(dlUrl, { mode: "cors" });
+    if (res.ok) {
+      const blob = await res.blob();
+      const ctype = (res.headers.get("content-type") || "").toLowerCase();
+      if (ctype.includes("pdf") || ctype.startsWith("image/")) {
+        const ext = ctype.includes("pdf") ? "pdf" : "png";
+        const file = new File([blob], `gdrive_${fid.slice(0, 8)}.${ext}`, { type: ctype });
+        closeModals();
+        await loadImportedFile(file);
+        return;
+      }
+    }
+  } catch (e) {}
+
+  // 3) Google Drive blocks cross-origin PDF fetch in browser -> open download in Safari & guide user
+  if (msg) {
+    msg.innerHTML = `⚠️ Google Drive 的 PDF 因浏览器安全限制无法由网页直接后台抓取。<br>请点 <a href="${dlUrl}" target="_blank" rel="noopener" style="color:#2563eb;font-weight:700;">⬇️ 点此下载该 PDF 到 iPad「文件」</a>，下载后点上方绿色「📂 打开 iPad 文件选择器」即可导入！`;
+  }
+}
+
 document.getElementById("fileInput").addEventListener("change", async (ev) => {
   const file = ev.target.files && ev.target.files[0];
   if (!file) return;
+  await loadImportedFile(file);
+  ev.target.value = "";
+});
+
+async function loadImportedFile(file) {
   appState.srcName = file.name.replace(/\.[^.]+$/, "");
   document.getElementById("fileNameLabel").textContent = file.name.slice(0, 16);
   document.getElementById("statusBar").textContent = `⏳ 正在载入 ${file.name} ...`;
@@ -2072,7 +2170,7 @@ document.getElementById("fileInput").addEventListener("change", async (ev) => {
     };
     img.src = imgUrl;
   }
-});
+}
 
 async function loadPdfPage(pageNum) {
   if (!appState.pdfDoc) return;

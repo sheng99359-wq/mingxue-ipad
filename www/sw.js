@@ -1,4 +1,4 @@
-const CACHE_NAME = "mingxue-ipad-v2";
+const CACHE_NAME = "mingxue-ipad-v3";
 const CORE_ASSETS = [
   "./",
   "./index.html",
@@ -26,14 +26,30 @@ self.addEventListener("fetch", (event) => {
   const req = event.request;
   if (req.method !== "GET") return;
   const url = new URL(req.url);
-  // Skip API calls and local config endpoint
   if (url.pathname.startsWith("/api/") || url.pathname.includes("/chat/completions")) return;
 
+  // Network-first for HTML/navigation and same-origin assets so updates show up immediately
+  if (req.mode === "navigate" || url.origin === location.origin) {
+    event.respondWith(
+      fetch(req, { cache: "no-cache" })
+        .then((res) => {
+          if (res && res.status === 200) {
+            const clone = res.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(req, clone)).catch(() => {});
+          }
+          return res;
+        })
+        .catch(() => caches.match(req))
+    );
+    return;
+  }
+
+  // Cache-first for external CDN libraries (pdf.js / jspdf)
   event.respondWith(
     caches.match(req).then((cached) => {
       const fetchPromise = fetch(req)
         .then((res) => {
-          if (res && res.status === 200 && (url.origin === location.origin || url.hostname.includes("cdnjs.cloudflare.com"))) {
+          if (res && res.status === 200 && url.hostname.includes("cdnjs.cloudflare.com")) {
             const clone = res.clone();
             caches.open(CACHE_NAME).then((cache) => cache.put(req, clone)).catch(() => {});
           }

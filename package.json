@@ -1,0 +1,16 @@
+{
+  "name": "mingxue-ipad-assistant",
+  "version": "2.0.0",
+  "description": "明学教育资料助手 iPad 原生 App 打包工程 (Capacitor iOS)",
+  "private": true,
+  "scripts": {
+    "cap:sync": "npx cap sync ios"
+  },
+  "dependencies": {
+    "@capacitor/core": "^6.1.2",
+    "@capacitor/ios": "^6.1.2"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^6.1.2"
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "appId": "com.mingxue.translator",
+  "appName": "明学教育助手",
+  "webDir": "www",
+  "bundledWebRuntime": false,
+  "server": {
+    "androidScheme": "https",
+    "iosScheme": "capacitor"
+  },
+  "ios": {
+    "contentInset": "automatic",
+    "allowsLinkPreview": false
+  }
+}

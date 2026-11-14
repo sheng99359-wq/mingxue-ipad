@@ -1,0 +1,53 @@
+name: Build iPad IPA (Unsigned for Sideloadly / AltStore)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, master ]
+
+jobs:
+  build-ipa:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Capacitor & Generate iOS Project
+        run: |
+          npm install
+          npx cap add ios
+          npx cap sync ios
+
+      - name: Configure Info.plist permissions (Photos / Camera / Arbitrary Loads)
+        run: |
+          PLIST="ios/App/App/Info.plist"
+          /usr/libexec/PlistBuddy -c "Add :NSCameraUsageDescription string '用于拍摄试卷或教材页面进行翻译'" "$PLIST" || true
+          /usr/libexec/PlistBuddy -c "Add :NSPhotoLibraryUsageDescription string '用于从相册导入试卷图片进行翻译'" "$PLIST" || true
+          /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity dict" "$PLIST" || true
+          /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity:NSAllowsArbitraryLoads bool true" "$PLIST" || true
+
+      - name: Build Unsigned .app & Package .ipa
+        run: |
+          xcodebuild -project ios/App/App.xcodeproj \
+            -scheme App \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            clean build
+          mkdir -p Payload
+          cp -R build/Build/Products/Release-iphoneos/App.app Payload/App.app
+          zip -r "明学教育助手_iPad版.ipa" Payload
+
+      - name: Upload .ipa Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MingXue-iPad-IPA
+          path: 明学教育助手_iPad版.ipa
